@@ -1,55 +1,47 @@
+import streamlit as st
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
-def check_links(target_url):
-    # We use a User-Agent header to avoid being blocked immediately by basic filters
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+# --- UI Setup ---
+st.set_page_config(page_title="Broken Link Detector", page_icon="🔍")
+st.title("🔍 Forbidden Link Finder")
+st.markdown("Enter a website URL below to scan for **403 Forbidden** errors.")
 
-    try:
-        response = requests.get(target_url, headers=headers, timeout=10)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        print(f"Could not access target URL: {e}")
-        return
+target_url = st.text_input("Target URL", placeholder="https://example.com")
+scan_button = st.button("Run Scan")
 
-    soup = BeautifulSoup(response.text, 'html.parser')
-    links = set()
-
-    # Extract all 'href' attributes from anchor tags
-    for a_tag in soup.find_all('a', href=True):
-        link = urljoin(target_url, a_tag['href'])
-        links.add(link)
-
-    print(f"Found {len(links)} unique links. Checking for 403 Forbidden errors...\n")
-
-    broken_links = []
-
-    for link in links:
+# --- Logic ---
+if scan_button and target_url:
+    with st.spinner("Scanning links... please wait."):
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        
         try:
-            # Use a HEAD request first (it's faster as it doesn't download the body)
-            res = requests.head(link, headers=headers, timeout=5, allow_redirects=True)
+            response = requests.get(target_url, headers=headers, timeout=10)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            links = {urljoin(target_url, a['href']) for a in soup.find_all('a', href=True)}
             
-            # Some servers block HEAD requests, if so, retry with GET
-            if res.status_code == 405 or res.status_code == 403:
-                res = requests.get(link, headers=headers, timeout=5)
+            st.info(f"Found {len(links)} unique links. Checking status codes...")
+            
+            broken_links = []
+            for link in links:
+                try:
+                    res = requests.head(link, headers=headers, timeout=5, allow_redirects=True)
+                    if res.status_code in [403, 405]:
+                        res = requests.get(link, headers=headers, timeout=5)
+                    
+                    if res.status_code == 403:
+                        broken_links.append(link)
+                except:
+                    continue
 
-            if res.status_code == 403:
-                print(f"[403 FORBIDDEN] -> {link}")
-                broken_links.append(link)
+            # --- Results Display ---
+            if broken_links:
+                st.error(f"Found {len(broken_links)} Forbidden (403) links:")
+                for bl in broken_links:
+                    st.write(f"❌ {bl}")
             else:
-                # Optional: print success for debugging
-                # print(f"[{res.status_code}] OK -> {link}")
-                pass
-
-        except requests.exceptions.RequestException:
-            print(f"[ERROR] Could not reach -> {link}")
-
-    print("\n--- Scan Complete ---")
-    print(f"Total 403 errors found: {len(broken_links)}")
-
-if __name__ == "__main__":
-    url_to_scan = input("Enter the URL to scan: ")
-    check_links(url_to_scan)
+                st.success("No 403 errors found! All links are accessible.")
+                
+        except Exception as e:
+            st.error(f"Error accessing the site: {e}")
